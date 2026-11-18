@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HOST Dispatcher Simulator</title>
+<meta name="description" content="Edit jobs, memory and devices, run the HOST scheduler (real-time queue, three feedback queues, memory and device allocation) and print the results.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!--BODY-START-->
+<div class="page">
+
+<header class="top">
+  <h1>HOST Dispatcher Simulator</h1>
+  <p class="lede">Add your own jobs, set the memory and devices, and the scheduler runs as you type. Read the trace on the right or print it.</p>
+</header>
+
+<main class="layout">
+
+<!-- ============ inputs ============ -->
+<section class="setup" aria-labelledby="setupH">
+  <h2 id="setupH">Setup</h2>
+
+  <h3>Jobs</h3>
+  <div class="scroll">
+    <table class="jobs" id="jobsTable">
+      <caption class="sr">Job list. One row per job.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Job</th>
+          <th scope="col" title="Arrival time (seconds)">Arr<span class="sr">ival</span></th>
+          <th scope="col" title="Priority: 0 real-time, 1 to 3 user job">Pri<span class="sr">ority</span></th>
+          <th scope="col" title="CPU time needed (seconds)">CPU</th>
+          <th scope="col" title="Memory needed (MB)">MB</th>
+          <th scope="col" title="Printers needed">Prn</th>
+          <th scope="col" title="Scanners needed">Scn</th>
+          <th scope="col" title="Modems needed">Mdm</th>
+          <th scope="col" title="CD drives needed">CD</th>
+          <th scope="col"><span class="sr">Remove</span></th>
+        </tr>
+      </thead>
+      <tbody id="jobsBody"></tbody>
+    </table>
+  </div>
+  <p class="legend-line">Arr arrival second &middot; Pri 0 real-time, 1&ndash;3 user job (sets the starting queue) &middot; CPU seconds &middot; MB memory &middot; Prn printers, Scn scanners, Mdm modems, CD drives. Real-time jobs use no devices.</p>
+  <div class="btn-row">
+    <button type="button" class="btn" id="addJob">Add job</button>
+    <button type="button" class="btn" id="sortJobs">Sort by arrival</button>
+    <button type="button" class="btn" id="clearJobs">Clear all</button>
+  </div>
+
+  <details class="paste" id="pasteBox">
+    <summary>Paste a list of jobs</summary>
+    <p class="note">One job per line: arrival, priority, cpu, memory, printers, scanners, modems, CDs. Lines starting with # are ignored.</p>
+    <textarea id="pasteText" rows="6" spellcheck="false" placeholder="0, 1, 4, 128, 1, 0, 0, 0&#10;2, 0, 1, 32, 0, 0, 0, 0" aria-label="Jobs to paste"></textarea>
+    <div class="btn-row">
+      <button type="button" class="btn" id="pasteLoad">Replace jobs with this list</button>
+    </div>
+    <p class="note err-text" id="pasteErr" hidden></p>
+  </details>
+
+  <h3>Memory and devices</h3>
+  <div class="grid-fields">
+    <div class="field"><label for="userMem">User memory (MB)</label><input id="userMem" type="number" min="1" step="1" inputmode="numeric"></div>
+    <div class="field"><label for="rtMem">Real-time memory (MB)</label><input id="rtMem" type="number" min="0" step="1" inputmode="numeric"></div>
+    <div class="field wide"><label for="policy">Memory placement policy</label><select id="policy"></select></div>
+    <div class="field wide"><label for="aging">Aging: move a waiting job back to queue 0 after (seconds, 0 = off)</label><input id="aging" type="number" min="0" step="1" inputmode="numeric"></div>
+    <div class="field"><label for="dev_printers">Printers</label><input id="dev_printers" type="number" min="0" step="1" inputmode="numeric"></div>
+    <div class="field"><label for="dev_scanners">Scanners</label><input id="dev_scanners" type="number" min="0" step="1" inputmode="numeric"></div>
+    <div class="field"><label for="dev_modems">Modems</label><input id="dev_modems" type="number" min="0" step="1" inputmode="numeric"></div>
+    <div class="field"><label for="dev_cds">CD drives</label><input id="dev_cds" type="number" min="0" step="1" inputmode="numeric"></div>
+  </div>
+  <p class="note">Real-time jobs run first and are never suspended. User jobs run in three feedback queues with a 1 second turn and move down one queue after each turn. A job leaves the user queue only when its memory and all its devices are free. Aging stops long jobs from starving: a job that has waited in queue 1 or 2 for the set number of seconds is put back at the end of queue 0.</p>
+</section>
+
+<!-- ============ results ============ -->
+<section class="results" id="results" aria-labelledby="resH">
+  <div class="res-head">
+    <h2 id="resH">Results</h2>
+    <div class="actions">
+      <button type="button" class="btn primary" id="btnPrint" data-web-only>Print results</button>
+      <button type="button" class="btn" id="btnDownload" data-web-only>Download .txt</button>
+      <button type="button" class="btn" id="btnCopy">Copy as text</button>
+    </div>
+  </div>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+
+  <div class="errbox" id="errorBox" role="alert" hidden></div>
+  <p class="empty" id="emptyBox" hidden>No jobs yet. Use <strong>Add job</strong> or paste a list on the left to see the schedule.</p>
+
+  <!-- shown on paper only -->
+  <div class="print-only" id="printInputs"></div>
+
+  <div id="resultBody">
+    <dl class="summary" id="summary"></dl>
+
+    <h3>Execution trace</h3>
+    <p class="legend" id="traceLegend">
+      <span class="lg sP">P</span> pending, waiting for memory or devices
+      <span class="lg sQ">Q</span> real-time queue
+      <span class="lg sF">F</span> feedback queue
+      <span class="lg sR">R</span> running
+      <span class="lg sS">S</span> suspended
+      <span class="lg sD">|</span> terminated
+    </p>
+    <div class="scroll trace-wrap"><table class="trace" id="trace"></table></div>
+    <p class="note" id="traceNote" hidden></p>
+    <div class="print-only print-trace" id="printTrace"></div>
+
+    <h3>Job times</h3>
+    <div class="scroll"><table class="stats" id="stats"></table></div>
+    <p class="note">Turnaround = finish &minus; arrival. Waiting = turnaround &minus; CPU time.</p>
+
+    <section class="stepper" aria-labelledby="stepH">
+      <h3 id="stepH">State at second <span id="stepT">0</span></h3>
+      <div class="step-ctl">
+        <button type="button" class="btn" id="stepPrev" aria-label="Previous second">&larr;</button>
+        <input id="stepRange" type="range" min="0" max="0" value="0" aria-label="Second">
+        <button type="button" class="btn" id="stepNext" aria-label="Next second">&rarr;</button>
+        <button type="button" class="btn" id="stepPlay">Play</button>
+      </div>
+      <div class="qgrid" id="queues"></div>
+      <h4>User memory</h4>
+      <div id="memView"></div>
+      <h4>Devices free</h4>
+      <p id="devView" class="devs"></p>
+    </section>
+
+    <h3>Event log</h3>
+    <ol class="log" id="log"></ol>
+    <p class="note" id="logNote" hidden></p>
+
+    <details class="plain" id="plain">
+      <summary>Plain-text output</summary>
+      <textarea id="plainText" readonly rows="14" spellcheck="false" aria-label="Plain-text output"></textarea>
+    </details>
+  </div>
+</section>
+
+</main>
+
+
+</div>
+<!--BODY-END-->
+<script src="dispatcher.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
